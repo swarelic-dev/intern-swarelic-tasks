@@ -47,7 +47,32 @@ class Condition:
             return False
 
         # YOUR CODE HERE
-        raise NotImplementedError("Condition.evaluate() not implemented")
+        ctx_val = context[self.field]
+        
+        if self.operator == 'eq':
+            return ctx_val == self.value
+        elif self.operator == 'ne':
+            return ctx_val != self.value
+        elif self.operator == 'gt':
+            return ctx_val > self.value
+        elif self.operator == 'gte':
+            return ctx_val >= self.value
+        elif self.operator == 'lt':
+            return ctx_val < self.value
+        elif self.operator == 'lte':
+            return ctx_val <= self.value
+        elif self.operator == 'in':
+            return ctx_val in self.value
+        elif self.operator == 'not_in':
+            return ctx_val not in self.value
+        elif self.operator == 'contains':
+            return self.value in ctx_val
+        elif self.operator == 'startswith':
+            if not isinstance(ctx_val, str):
+                return False
+            return ctx_val.startswith(self.value)
+            
+        return False
 
 
 @dataclass
@@ -77,7 +102,10 @@ class Rule:
         An empty conditions list always returns True (matches everything).
         """
         # YOUR CODE HERE
-        raise NotImplementedError("Rule.matches() not implemented")
+        for condition in self.conditions:
+            if not condition.evaluate(context):
+                return False
+        return True
 
 
 class RulesEngine:
@@ -92,7 +120,10 @@ class RulesEngine:
         Return None if no rule matches.
         """
         # YOUR CODE HERE
-        raise NotImplementedError("RulesEngine.evaluate() not implemented")
+        for rule in self.rules:
+            if rule.matches(context):
+                return rule.action
+        return None
 
     def evaluate_all(self, context: dict) -> 'list[tuple[Rule, Action]]':
         """
@@ -100,4 +131,13 @@ class RulesEngine:
         Used for debugging and audit mode.
         """
         # YOUR CODE HERE
-        raise NotImplementedError("RulesEngine.evaluate_all() not implemented")
+        return [(rule, rule.action) for rule in self.rules if rule.matches(context)]
+
+
+def evaluate_rules(event: dict, rules: list[Rule]) -> 'Action | None':
+    """
+    Standalone function to evaluate an event against a list of rules.
+    Matches the specific requirement from the exercise prompt.
+    """
+    engine = RulesEngine(rules)
+    return engine.evaluate(event)

@@ -94,7 +94,33 @@ class TestCondition:
         assert cond.evaluate({'notes': 'This is an urgent matter'}) is True
         assert cond.evaluate({'notes': 'Normal inquiry'}) is False
 
-    # TODO: Add more tests for gte, lte, lt, ne, startswith
+    def test_gte_operator(self):
+        cond = Condition(field='age', operator='gte', value=18)
+        assert cond.evaluate({'age': 18}) is True
+        assert cond.evaluate({'age': 19}) is True
+        assert cond.evaluate({'age': 17}) is False
+
+    def test_lte_operator(self):
+        cond = Condition(field='age', operator='lte', value=18)
+        assert cond.evaluate({'age': 18}) is True
+        assert cond.evaluate({'age': 17}) is True
+        assert cond.evaluate({'age': 19}) is False
+
+    def test_lt_operator(self):
+        cond = Condition(field='age', operator='lt', value=18)
+        assert cond.evaluate({'age': 17}) is True
+        assert cond.evaluate({'age': 18}) is False
+
+    def test_ne_operator(self):
+        cond = Condition(field='status', operator='ne', value='active')
+        assert cond.evaluate({'status': 'inactive'}) is True
+        assert cond.evaluate({'status': 'active'}) is False
+
+    def test_startswith_operator(self):
+        cond = Condition(field='phone', operator='startswith', value='+1')
+        assert cond.evaluate({'phone': '+14155552671'}) is True
+        assert cond.evaluate({'phone': '+447911123456'}) is False
+        assert cond.evaluate({'phone': 12345}) is False  # not a string
 
 
 # ─── Rule Tests ───────────────────────────────────────────────────
@@ -152,3 +178,9 @@ class TestRulesEngine:
         # VIP caller after hours — both rules match
         results = engine.evaluate_all({'caller_tag': 'VIP', 'hour_of_day': 22})
         assert len(results) == 2
+
+    def test_standalone_evaluate_rules_function(self, vip_rule, after_hours_rule):
+        from rules_engine.engine import evaluate_rules
+        action = evaluate_rules({'caller_tag': 'VIP', 'hour_of_day': 14}, [after_hours_rule, vip_rule])
+        assert action is not None
+        assert action.type == 'route'
