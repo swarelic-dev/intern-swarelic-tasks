@@ -1,36 +1,124 @@
+"""
+pipeline.py — Exercise 4.4: STT + LLM Mini Pipeline
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Demonstrates the core STT → LLM loop at the heart of SCAI's voice pipeline.
+
+Step 1  Audio file  →  OpenAI Whisper API  →  transcript text
+Step 2  Transcript  →  OpenAI Chat API      →  receptionist reply
+
+Requirements
+------------
+    pip install openai
+    export OPENAI_API_KEY="sk-..."
+
+Usage
+-----
+    # Transcribe and respond to a specific audio file
+    python pipeline.py sample.mp3
+
+    # Or use the default filename "sample.mp3" in the same directory
+    python pipeline.py
+"""
+
+from __future__ import annotations
+
 import os
-import openai
+import sys
 
-def process_audio(audio_file_path):
-    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    print(f"Transcribing {audio_file_path}...")
-    # Step 1: STT
+def transcribe(client, audio_file_path: str) -> str:
+    """
+    Step 1 — Speech-to-Text
+    Use OpenAI Whisper to transcribe an audio file to text.
+
+    Maps to: the STT stage in SCAI's pipeline.py, where audio chunks
+    streamed over WebSocket are forwarded to Deepgram / Whisper.
+    """
+    print(f"[STT] Transcribing '{audio_file_path}' with Whisper …")
     with open(audio_file_path, "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
+        response = client.audio.transcriptions.create(
             model="whisper-1",
-            file=audio_file
+            file=audio_file,
+            response_format="text",
         )
-    
-    user_text = transcript.text
-    print(f"User said: {user_text}")
+    transcript = response.strip()
+    print(f"[STT] Transcript: \"{transcript}\"")
+    return transcript
 
-    # Step 2: LLM
-    print("Generating response...")
+
+def generate_reply(client, transcript: str) -> str:
+    """
+    Step 2 — LLM Response
+    Pass the transcript to GPT with a receptionist system prompt.
+
+    Maps to: the LLM stage in SCAI's pipeline.py, where the transcript
+    is combined with call context and sent to the configured LLM.
+    """
+    print("[LLM] Sending transcript to GPT-4o …")
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are a helpful receptionist. Answer the user's question."},
-            {"role": "user", "content": user_text}
-        ]
+            {
+                "role": "system",
+                "content": "You are a helpful receptionist. Answer the user's question.",
+            },
+            {
+                "role": "user",
+                "content": transcript,
+            },
+        ],
+        temperature=0.7,
     )
+    reply = response.choices[0].message.content.strip()
+    print(f"[LLM] Reply: \"{reply}\"")
+    return reply
 
-    llm_reply = response.choices[0].message.content
-    print(f"LLM Reply: {llm_reply}")
+
+def run_pipeline(audio_file_path: str) -> None:
+    """
+    Execute the full STT → LLM mini-pipeline.
+
+    Parameters
+    ----------
+    audio_file_path : str
+        Path to a .mp3, .wav, .m4a, or .webm audio file.
+    """
+    import openai
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("[ERROR] OPENAI_API_KEY environment variable is not set.")
+        print("        Export it with: export OPENAI_API_KEY='sk-...'")
+        sys.exit(1)
+
+    if not os.path.exists(audio_file_path):
+        print(f"[ERROR] Audio file not found: '{audio_file_path}'")
+        print("        Provide a valid audio file path as an argument.")
+        sys.exit(1)
+
+    client = openai.OpenAI(api_key=api_key)
+
+    print("=" * 55)
+    print("  SCAI Mini Voice Pipeline — STT + LLM")
+    print("=" * 55)
+
+    # Step 1: Speech-to-Text
+    transcript = transcribe(client, audio_file_path)
+
+    print()
+
+    # Step 2: LLM Reply
+    reply = generate_reply(client, transcript)
+
+    print()
+    print("=" * 55)
+    print("  Pipeline complete.")
+    print(f"  Transcript : {transcript}")
+    print(f"  LLM Reply  : {reply}")
+    print("=" * 55)
+
 
 if __name__ == "__main__":
-    audio_path = "sample.mp3"
-    if not os.path.exists(audio_path):
-        print(f"Please provide an audio file named '{audio_path}' in the same directory to run the pipeline.")
-    else:
-        process_audio(audio_path)
+    # Accept an optional CLI argument for the audio file path
+    audio_path = sys.argv[1] if len(sys.argv) > 1 else "sample.mp3"
+    run_pipeline(audio_path)

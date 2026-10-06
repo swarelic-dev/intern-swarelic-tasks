@@ -1,186 +1,240 @@
 """
-tests/test_engine.py — Starter test file for Exercise 4.2
+tests/test_engine.py
+~~~~~~~~~~~~~~~~~~~~
+Unit tests for the Exercise 4.2 Rules Engine.
 
-TODO: Implement all test cases. Add at least 15 total tests.
-Run with: pytest tests/ -v
+Run with:
+    cd exercises/4.2-rules-engine
+    pytest tests/ -v
+
+Covers
+------
+- Basic match (single condition that matches)
+- Basic no-match (single condition that does not match)
+- Multiple rules — only matching ones returned
+- Multiple rules — all match
+- Multiple rules — none match  → empty list
+- Edge: empty rules list
+- Edge: empty event dict
+- Edge: field missing from event
+- Edge: malformed rule (missing "condition" key)
+- Edge: malformed rule (missing "action" key)
+- Edge: malformed condition (missing "field" key)
+- Edge: malformed condition (missing "equals" key)
+- Exact task-spec example from the exercise prompt
 """
+
 import pytest
-from rules_engine.engine import Condition, Rule, Action, RulesEngine
+from rules_engine.engine import evaluate_rules
 
 
-# ─── Fixtures ─────────────────────────────────────────────────────
-
-@pytest.fixture
-def vip_rule():
-    return Rule(
-        id='rule-001',
-        name='VIP Bypass',
-        priority=1,
-        conditions=[
-            Condition(field='caller_tag', operator='in', value=['VIP', 'PREMIUM'])
-        ],
-        action=Action(type='route', data={'target': 'vip-queue'})
-    )
+# ──────────────────────────────────────────────────────────────────
+# Fixtures — reusable rule and event objects
+# ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture
-def after_hours_rule():
-    return Rule(
-        id='rule-003',
-        name='After Hours',
-        priority=3,
-        conditions=[
-            Condition(field='hour_of_day', operator='gte', value=21)
-        ],
-        action=Action(type='voicemail', data={'message': 'We are closed.'})
-    )
+def booked_event():
+    """The example event from the exercise prompt."""
+    return {
+        "event": "record_created",
+        "record_type": "appointment",
+        "status": "booked",
+    }
+
 
 @pytest.fixture
-def repeat_caller_rule():
-    return Rule(
-        id='rule-005',
-        name='Repeat Caller',
-        priority=5,
-        conditions=[
-            Condition(field='call_count', operator='gt', value=3)
-        ],
-        action=Action(type='escalate', data={'target': 'supervisor'})
-    )
+def lead_event():
+    return {
+        "event": "record_created",
+        "record_type": "lead",
+        "status": "new",
+    }
 
 
-# ─── Condition Tests ──────────────────────────────────────────────
-
-class TestCondition:
-
-    def test_eq_operator_match(self):
-        cond = Condition(field='status', operator='eq', value='active')
-        assert cond.evaluate({'status': 'active'}) is True
-
-    def test_eq_operator_no_match(self):
-        cond = Condition(field='status', operator='eq', value='active')
-        assert cond.evaluate({'status': 'inactive'}) is False
-
-    def test_missing_field_returns_false(self):
-        cond = Condition(field='nonexistent', operator='eq', value='anything')
-        assert cond.evaluate({}) is False
-
-    def test_unknown_operator_raises_value_error(self):
-        cond = Condition(field='x', operator='INVALID_OP', value=1)
-        with pytest.raises(ValueError, match="Unknown operator"):
-            cond.evaluate({'x': 1})
-
-    def test_gt_operator_true(self):
-        cond = Condition(field='call_count', operator='gt', value=3)
-        assert cond.evaluate({'call_count': 4}) is True
-
-    def test_gt_operator_false(self):
-        cond = Condition(field='call_count', operator='gt', value=3)
-        assert cond.evaluate({'call_count': 3}) is False  # not strictly greater
-
-    def test_in_operator_match(self):
-        cond = Condition(field='tag', operator='in', value=['VIP', 'PREMIUM'])
-        assert cond.evaluate({'tag': 'VIP'}) is True
-
-    def test_in_operator_no_match(self):
-        cond = Condition(field='tag', operator='in', value=['VIP', 'PREMIUM'])
-        assert cond.evaluate({'tag': 'STANDARD'}) is False
-
-    def test_not_in_operator(self):
-        cond = Condition(field='tag', operator='not_in', value=['BLOCKED'])
-        assert cond.evaluate({'tag': 'VIP'}) is True
-        assert cond.evaluate({'tag': 'BLOCKED'}) is False
-
-    def test_contains_operator(self):
-        cond = Condition(field='notes', operator='contains', value='urgent')
-        assert cond.evaluate({'notes': 'This is an urgent matter'}) is True
-        assert cond.evaluate({'notes': 'Normal inquiry'}) is False
-
-    def test_gte_operator(self):
-        cond = Condition(field='age', operator='gte', value=18)
-        assert cond.evaluate({'age': 18}) is True
-        assert cond.evaluate({'age': 19}) is True
-        assert cond.evaluate({'age': 17}) is False
-
-    def test_lte_operator(self):
-        cond = Condition(field='age', operator='lte', value=18)
-        assert cond.evaluate({'age': 18}) is True
-        assert cond.evaluate({'age': 17}) is True
-        assert cond.evaluate({'age': 19}) is False
-
-    def test_lt_operator(self):
-        cond = Condition(field='age', operator='lt', value=18)
-        assert cond.evaluate({'age': 17}) is True
-        assert cond.evaluate({'age': 18}) is False
-
-    def test_ne_operator(self):
-        cond = Condition(field='status', operator='ne', value='active')
-        assert cond.evaluate({'status': 'inactive'}) is True
-        assert cond.evaluate({'status': 'active'}) is False
-
-    def test_startswith_operator(self):
-        cond = Condition(field='phone', operator='startswith', value='+1')
-        assert cond.evaluate({'phone': '+14155552671'}) is True
-        assert cond.evaluate({'phone': '+447911123456'}) is False
-        assert cond.evaluate({'phone': 12345}) is False  # not a string
+@pytest.fixture
+def send_whatsapp_rule():
+    return {"condition": {"field": "status", "equals": "booked"}, "action": "send_whatsapp"}
 
 
-# ─── Rule Tests ───────────────────────────────────────────────────
-
-class TestRule:
-
-    def test_all_conditions_must_match(self, vip_rule):
-        # VIP rule has one condition: caller_tag in ['VIP', 'PREMIUM']
-        assert vip_rule.matches({'caller_tag': 'VIP'}) is True
-
-    def test_any_failing_condition_returns_false(self):
-        rule = Rule(
-            id='r', name='test', priority=1,
-            conditions=[
-                Condition('a', 'eq', 1),
-                Condition('b', 'eq', 2),  # This will fail
-            ],
-            action=Action(type='hangup')
-        )
-        assert rule.matches({'a': 1, 'b': 99}) is False
-
-    def test_empty_conditions_always_matches(self):
-        rule = Rule(
-            id='r', name='catch-all', priority=99,
-            conditions=[],
-            action=Action(type='route', data={'target': 'default-queue'})
-        )
-        assert rule.matches({}) is True
-        assert rule.matches({'anything': 'here'}) is True
+@pytest.fixture
+def assign_agent_rule():
+    return {"condition": {"field": "record_type", "equals": "lead"}, "action": "assign_agent"}
 
 
-# ─── RulesEngine Tests ────────────────────────────────────────────
+@pytest.fixture
+def send_email_rule():
+    return {"condition": {"field": "status", "equals": "booked"}, "action": "send_email"}
 
-class TestRulesEngine:
 
-    def test_vip_bypass_scenario(self, vip_rule, after_hours_rule):
-        engine = RulesEngine([after_hours_rule, vip_rule])  # deliberately out of priority order
-        action = engine.evaluate({'caller_tag': 'VIP', 'hour_of_day': 22})
-        assert action is not None
-        assert action.type == 'route'  # VIP rule wins (priority 1 < 3)
+# ──────────────────────────────────────────────────────────────────
+# Test 1 — Basic match: single matching rule returns its action
+# ──────────────────────────────────────────────────────────────────
 
-    def test_no_match_returns_none(self, vip_rule):
-        engine = RulesEngine([vip_rule])
-        action = engine.evaluate({'caller_tag': 'STANDARD', 'hour_of_day': 14})
-        assert action is None
+def test_single_rule_matches(booked_event, send_whatsapp_rule):
+    result = evaluate_rules(booked_event, [send_whatsapp_rule])
+    assert result == ["send_whatsapp"]
 
-    def test_rules_evaluated_in_priority_order(self, vip_rule, after_hours_rule, repeat_caller_rule):
-        engine = RulesEngine([repeat_caller_rule, after_hours_rule, vip_rule])
-        # VIP caller (priority 1 should win over repeat-caller priority 5)
-        action = engine.evaluate({'caller_tag': 'VIP', 'call_count': 10, 'hour_of_day': 14})
-        assert action.type == 'route'
 
-    def test_evaluate_all_returns_all_matches(self, vip_rule, after_hours_rule):
-        engine = RulesEngine([vip_rule, after_hours_rule])
-        # VIP caller after hours — both rules match
-        results = engine.evaluate_all({'caller_tag': 'VIP', 'hour_of_day': 22})
-        assert len(results) == 2
+# ──────────────────────────────────────────────────────────────────
+# Test 2 — Basic no-match: condition field value differs
+# ──────────────────────────────────────────────────────────────────
 
-    def test_standalone_evaluate_rules_function(self, vip_rule, after_hours_rule):
-        from rules_engine.engine import evaluate_rules
-        action = evaluate_rules({'caller_tag': 'VIP', 'hour_of_day': 14}, [after_hours_rule, vip_rule])
-        assert action is not None
-        assert action.type == 'route'
+def test_single_rule_no_match(booked_event, assign_agent_rule):
+    # event has record_type="appointment", rule expects "lead"
+    result = evaluate_rules(booked_event, [assign_agent_rule])
+    assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 3 — Exact exercise-prompt example
+# ──────────────────────────────────────────────────────────────────
+
+def test_exercise_prompt_example():
+    """
+    Reproduces the exact scenario from the task description:
+      event  = {event, record_type=appointment, status=booked}
+      rules  = [status==booked → send_whatsapp, record_type==lead → assign_agent]
+      output = ["send_whatsapp"]
+    """
+    event = {
+        "event": "record_created",
+        "record_type": "appointment",
+        "status": "booked",
+    }
+    rules = [
+        {"condition": {"field": "status",      "equals": "booked"}, "action": "send_whatsapp"},
+        {"condition": {"field": "record_type", "equals": "lead"},   "action": "assign_agent"},
+    ]
+    result = evaluate_rules(event, rules)
+    assert result == ["send_whatsapp"]
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 4 — Multiple rules all match → all actions returned in order
+# ──────────────────────────────────────────────────────────────────
+
+def test_multiple_rules_all_match(booked_event, send_whatsapp_rule, send_email_rule):
+    rules = [send_whatsapp_rule, send_email_rule]
+    result = evaluate_rules(booked_event, rules)
+    assert result == ["send_whatsapp", "send_email"]
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 5 — Only some rules match → only matched actions returned
+# ──────────────────────────────────────────────────────────────────
+
+def test_partial_match_returns_only_matched(booked_event, send_whatsapp_rule, assign_agent_rule):
+    rules = [send_whatsapp_rule, assign_agent_rule]
+    result = evaluate_rules(booked_event, rules)
+    assert "send_whatsapp" in result
+    assert "assign_agent" not in result
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 6 — No rules match → empty list (not None)
+# ──────────────────────────────────────────────────────────────────
+
+def test_no_rules_match_returns_empty_list(assign_agent_rule):
+    event = {"record_type": "appointment"}   # does not match "lead"
+    result = evaluate_rules(event, [assign_agent_rule])
+    assert result == []
+    assert isinstance(result, list)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 7 — Empty rules list → always returns empty list
+# ──────────────────────────────────────────────────────────────────
+
+def test_empty_rules_list(booked_event):
+    result = evaluate_rules(booked_event, [])
+    assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 8 — Empty event dict → nothing can match → empty list
+# ──────────────────────────────────────────────────────────────────
+
+def test_empty_event(send_whatsapp_rule):
+    result = evaluate_rules({}, [send_whatsapp_rule])
+    assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 9 — Field missing from event → no match (not an error)
+# ──────────────────────────────────────────────────────────────────
+
+def test_missing_field_in_event_does_not_raise():
+    event = {"record_type": "appointment"}   # "status" is missing
+    rule  = {"condition": {"field": "status", "equals": "booked"}, "action": "send_whatsapp"}
+    result = evaluate_rules(event, [rule])
+    assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 10 — Malformed rule: missing "condition" key → skipped silently
+# ──────────────────────────────────────────────────────────────────
+
+def test_rule_missing_condition_key_is_skipped():
+    event = {"status": "booked"}
+    rule  = {"action": "send_whatsapp"}          # no "condition"
+    result = evaluate_rules(event, [rule])
+    assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 11 — Malformed rule: missing "action" key → skipped silently
+# ──────────────────────────────────────────────────────────────────
+
+def test_rule_missing_action_key_is_skipped():
+    event = {"status": "booked"}
+    rule  = {"condition": {"field": "status", "equals": "booked"}}  # no "action"
+    result = evaluate_rules(event, [rule])
+    assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 12 — Malformed condition: missing "field" key → no match
+# ──────────────────────────────────────────────────────────────────
+
+def test_condition_missing_field_key():
+    event = {"status": "booked"}
+    rule  = {"condition": {"equals": "booked"}, "action": "send_whatsapp"}
+    result = evaluate_rules(event, [rule])
+    assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 13 — Malformed condition: missing "equals" key → no match
+# ──────────────────────────────────────────────────────────────────
+
+def test_condition_missing_equals_key():
+    event = {"status": "booked"}
+    rule  = {"condition": {"field": "status"}, "action": "send_whatsapp"}
+    result = evaluate_rules(event, [rule])
+    assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 14 — Case sensitivity: "Booked" ≠ "booked"
+# ──────────────────────────────────────────────────────────────────
+
+def test_condition_is_case_sensitive():
+    event = {"status": "Booked"}  # capital B
+    rule  = {"condition": {"field": "status", "equals": "booked"}, "action": "send_whatsapp"}
+    result = evaluate_rules(event, [rule])
+    assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Test 15 — Mixed valid and malformed rules → only valid matches returned
+# ──────────────────────────────────────────────────────────────────
+
+def test_mixed_valid_and_malformed_rules():
+    event = {"status": "booked"}
+    rules = [
+        {"action": "orphan_action"},                                         # no condition
+        {"condition": {"field": "status", "equals": "booked"}, "action": "send_whatsapp"},
+        {"condition": {"field": "status"}},                                  # no action
+    ]
+    result = evaluate_rules(event, rules)
+    assert result == ["send_whatsapp"]
