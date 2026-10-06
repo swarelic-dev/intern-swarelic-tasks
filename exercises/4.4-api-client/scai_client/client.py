@@ -1,7 +1,10 @@
 """
-scai_client/client.py — Starter for Exercise 4.4
+scai_client/client.py — Exercise 4.4
 
-TODO: Implement _request() and all the call log methods.
+Full implementation of the SCAI REST API client with:
+- Auto-login and token refresh
+- 401 retry logic
+- Typed error mapping (404 → SCAINotFoundError, 400 → SCAIValidationError, etc.)
 """
 import requests
 from .config import SCAIClientConfig
@@ -53,8 +56,64 @@ class SCAIClient:
         Returns:
             Parsed JSON dict, or None for 204 No Content.
         """
-        # TODO: Implement this
-        raise NotImplementedError("_request() not implemented")
+        url = self._config.base_url.rstrip('/') + path
+
+        def _do_request() -> requests.Response:
+            token = self._token_manager.get_access_token()
+            headers = kwargs.pop('headers', {})
+            headers['Authorization'] = f'Bearer {token}'
+            return self._session.request(
+                method, url,
+                headers=headers,
+                timeout=self._config.timeout,
+                **kwargs,
+            )
+
+        resp = _do_request()
+
+        # On 401, invalidate token and retry once
+        if resp.status_code == 401:
+            self._token_manager.invalidate()
+            resp = _do_request()
+
+        return self._handle_response(resp)
+
+    def _handle_response(self, resp: requests.Response) -> dict | None:
+        """Map HTTP response to return value or exception."""
+        if resp.status_code == 204:
+            return None
+
+        if resp.ok:
+            return resp.json()
+
+        # Try to parse error body
+        try:
+            body = resp.json()
+        except Exception:
+            body = {'detail': resp.text}
+
+        if resp.status_code == 404:
+            raise SCAINotFoundError(
+                body.get('detail', 'Resource not found'),
+                status_code=404,
+                response_body=body,
+            )
+        if resp.status_code == 400:
+            raise SCAIValidationError(
+                "Validation error",
+                errors=body,
+            )
+        if resp.status_code in (401, 403):
+            raise SCAIAuthError(
+                body.get('detail', 'Unauthorized'),
+                status_code=resp.status_code,
+                response_body=body,
+            )
+        raise SCAIAPIError(
+            body.get('detail', f'API error {resp.status_code}'),
+            status_code=resp.status_code,
+            response_body=body,
+        )
 
     # ── Call Logs ────────────────────────────────────────────────
 
@@ -64,22 +123,33 @@ class SCAIClient:
         GET /api/v1/call-logs/
         Returns paginated response: {count, next, previous, results}
         """
-        # TODO: build params dict and call _request
-        raise NotImplementedError("list_call_logs() not implemented")
+        params = {'page': page, 'page_size': page_size}
+        if status is not None:
+            params['status'] = status
+        if search is not None:
+            params['search'] = search
+        return self._request('GET', '/api/v1/call-logs/', params=params)
 
     def get_call_log(self, call_id: int) -> dict:
         """GET /api/v1/call-logs/{id}/"""
-        raise NotImplementedError("get_call_log() not implemented")
+        return self._request('GET', f'/api/v1/call-logs/{call_id}/')
 
     def create_call_log(self, agent_name: str, caller_number: str,
                         duration_secs: int, status: str, notes: str = '') -> dict:
         """POST /api/v1/call-logs/ — Returns the created call log dict."""
-        raise NotImplementedError("create_call_log() not implemented")
+        payload = {
+            'agent_name': agent_name,
+            'caller_number': caller_number,
+            'duration_secs': duration_secs,
+            'status': status,
+            'notes': notes,
+        }
+        return self._request('POST', '/api/v1/call-logs/', json=payload)
 
     def update_call_log(self, call_id: int, **fields) -> dict:
         """PATCH /api/v1/call-logs/{id}/ — Partial update."""
-        raise NotImplementedError("update_call_log() not implemented")
+        return self._request('PATCH', f'/api/v1/call-logs/{call_id}/', json=fields)
 
     def delete_call_log(self, call_id: int) -> None:
         """DELETE /api/v1/call-logs/{id}/ — Returns None on success."""
-        raise NotImplementedError("delete_call_log() not implemented")
+        return self._request('DELETE', f'/api/v1/call-logs/{call_id}/')

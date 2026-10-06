@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebSocket Echo Client — Exercise 4.3</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Design Tokens ─────────────────────────────────────── */
+    :root {
+      --bg:          #0f1117;
+      --surface:     #1a1d27;
+      --surface2:    #22263a;
+      --border:      #2e3248;
+      --accent:      #6c63ff;
+      --accent-glow: rgba(108, 99, 255, 0.25);
+      --echo-color:  #34d399;
+      --echo-glow:   rgba(52, 211, 153, 0.15);
+      --sent-color:  #94a3b8;
+      --text:        #e2e8f0;
+      --text-muted:  #64748b;
+      --status-on:   #34d399;
+      --status-off:  #f87171;
+      --radius:      12px;
+      --radius-sm:   8px;
+    }
+
+    /* ── Reset ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    /* ── Card ──────────────────────────────────────────────── */
+    .card {
+      width: 100%;
+      max-width: 680px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ────────────────────────────────────────────── */
+    .header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .ws-icon {
+      width: 36px;
+      height: 36px;
+      background: var(--accent-glow);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header h1 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .header p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Status badge ──────────────────────────────────────── */
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 12px;
+      transition: all 0.3s ease;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--status-off);
+      transition: background 0.3s ease;
+    }
+
+    .status-badge.connected .status-dot { background: var(--status-on); animation: pulse 2s infinite; }
+    .status-badge.connected { color: var(--status-on); border-color: rgba(52, 211, 153, 0.3); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* ── Message list ──────────────────────────────────────── */
+    #messages {
+      flex: 1;
+      min-height: 340px;
+      max-height: 420px;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    #messages::-webkit-scrollbar { width: 4px; }
+    #messages::-webkit-scrollbar-track { background: transparent; }
+    #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      gap: 8px;
+      font-size: 0.85rem;
+    }
+
+    .empty-state .icon { font-size: 2.5rem; opacity: 0.4; }
+
+    /* ── Message bubble ────────────────────────────────────── */
+    .message {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      animation: fadeSlide 0.2s ease;
+    }
+
+    @keyframes fadeSlide {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .message.sent  { align-items: flex-end; }
+    .message.echo  { align-items: flex-start; }
+
+    .bubble {
+      max-width: 80%;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      word-break: break-word;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .message.sent .bubble {
+      background: var(--accent);
+      color: #fff;
+      border-bottom-right-radius: 2px;
+    }
+
+    .message.echo .bubble {
+      background: var(--echo-glow);
+      border: 1px solid rgba(52, 211, 153, 0.35);
+      color: var(--echo-color);
+      border-bottom-left-radius: 2px;
+    }
+
+    .meta {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      padding: 0 4px;
+    }
+
+    /* ── Input area ────────────────────────────────────────── */
+    .input-area {
+      padding: 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      background: var(--surface2);
+    }
+
+    #messageInput {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.875rem;
+      padding: 10px 14px;
+      outline: none;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    #messageInput::placeholder { color: var(--text-muted); }
+
+    #messageInput:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    #messageInput:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    #sendBtn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 10px 20px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+      white-space: nowrap;
+    }
+
+    #sendBtn:hover:not(:disabled) {
+      opacity: 0.9;
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+
+    #sendBtn:active:not(:disabled) { transform: scale(0.96); }
+    #sendBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Footer ────────────────────────────────────────────── */
+    .footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="ws-icon">⚡</div>
+      <div>
+        <h1>WebSocket Echo Client</h1>
+        <p>ws://localhost:8765</p>
+      </div>
+    </div>
+    <div class="status-badge" id="statusBadge">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Disconnected</span>
+    </div>
+  </div>
+
+  <!-- Message list -->
+  <div id="messages">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">💬</div>
+      <div>Connect to the server and send a message</div>
+    </div>
+  </div>
+
+  <!-- Input area -->
+  <div class="input-area">
+    <input
+      type="text"
+      id="messageInput"
+      placeholder="Type a message and press Enter…"
+      disabled
+      autocomplete="off"
+    />
+    <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>Exercise 4.3 — WebSocket Echo Server</span>
+    <span id="msgCount">0 messages</span>
+  </div>
+</div>
+
+<script>
+  /* ── State ─────────────────────────────────────────────── */
+  let ws = null;
+  let messageCount = 0;
+  const SERVER_URL = "ws://localhost:8765";
+
+  /* ── DOM refs ──────────────────────────────────────────── */
+  const messagesEl   = document.getElementById("messages");
+  const inputEl      = document.getElementById("messageInput");
+  const sendBtnEl    = document.getElementById("sendBtn");
+  const statusBadge  = document.getElementById("statusBadge");
+  const statusText   = document.getElementById("statusText");
+  const emptyState   = document.getElementById("emptyState");
+  const msgCountEl   = document.getElementById("msgCount");
+
+  /* ── WebSocket lifecycle ───────────────────────────────── */
+  function connect() {
+    ws = new WebSocket(SERVER_URL);
+
+    ws.onopen = () => {
+      setConnected(true);
+    };
+
+    ws.onmessage = (event) => {
+      appendMessage(event.data, "echo");
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+      // Reconnect after 3 seconds
+      setTimeout(connect, 3000);
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+  }
+
+  /* ── UI helpers ────────────────────────────────────────── */
+  function setConnected(connected) {
+    inputEl.disabled   = !connected;
+    sendBtnEl.disabled = !connected;
+    statusText.textContent = connected ? "Connected" : "Reconnecting…";
+    statusBadge.className  = connected ? "status-badge connected" : "status-badge";
+  }
+
+  function appendMessage(text, type /* "sent" | "echo" */) {
+    if (emptyState) emptyState.remove();
+
+    const now  = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const label = type === "sent" ? "You" : "Server";
+
+    const msgEl = document.createElement("div");
+    msgEl.className = `message ${type}`;
+    msgEl.innerHTML = `
+      <div class="bubble">${escapeHtml(text)}</div>
+      <div class="meta">${label} · ${now}</div>
+    `;
+    messagesEl.appendChild(msgEl);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    messageCount++;
+    msgCountEl.textContent = `${messageCount} message${messageCount !== 1 ? "s" : ""}`;
+  }
+
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  /* ── Send ──────────────────────────────────────────────── */
+  function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+    ws.send(text);
+    appendMessage(text, "sent");
+    inputEl.value = "";
+    inputEl.focus();
+  }
+
+  /* ── Keyboard shortcut ─────────────────────────────────── */
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  /* ── Boot ──────────────────────────────────────────────── */
+  connect();
+</script>
+
+</body>
+</html>
