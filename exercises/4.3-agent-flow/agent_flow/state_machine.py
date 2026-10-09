@@ -1,10 +1,5 @@
 """
-agent_flow/state_machine.py — Starter for Exercise 4.3
-
-TODO: Define all valid transitions in TRANSITIONS and implement
-      trigger(), can_trigger() methods.
-
-See docs/03-agent-flow.md for the full state diagram.
+agent_flow/state_machine.py — Agent State Machine Implementation for Exercise 4.3
 """
 from enum import Enum, auto
 from dataclasses import dataclass, field
@@ -58,7 +53,7 @@ class AgentStateMachine:
     """
     State machine for agent call lifecycle.
 
-    Valid transitions (fill these in):
+    Valid transitions:
     OFFLINE     + LOGIN         → ONLINE
     ONLINE      + READY         → AVAILABLE
     ONLINE      + LOGOUT        → OFFLINE
@@ -73,10 +68,19 @@ class AgentStateMachine:
     BREAK       + LOGOUT        → OFFLINE
     """
 
-    # TODO: Define all transitions here
     TRANSITIONS: list[StateTransition] = [
-        # Example — uncomment and complete:
-        # StateTransition(AgentState.OFFLINE, AgentEvent.LOGIN, AgentState.ONLINE),
+        StateTransition(AgentState.OFFLINE,     AgentEvent.LOGIN,         AgentState.ONLINE),
+        StateTransition(AgentState.ONLINE,      AgentEvent.READY,         AgentState.AVAILABLE),
+        StateTransition(AgentState.ONLINE,      AgentEvent.LOGOUT,        AgentState.OFFLINE),
+        StateTransition(AgentState.AVAILABLE,   AgentEvent.CALL_RECEIVED, AgentState.RINGING),
+        StateTransition(AgentState.AVAILABLE,   AgentEvent.TAKE_BREAK,    AgentState.BREAK),
+        StateTransition(AgentState.AVAILABLE,   AgentEvent.LOGOUT,        AgentState.OFFLINE),
+        StateTransition(AgentState.RINGING,     AgentEvent.CALL_ACCEPTED, AgentState.ON_CALL),
+        StateTransition(AgentState.RINGING,     AgentEvent.CALL_REJECTED, AgentState.AVAILABLE),
+        StateTransition(AgentState.ON_CALL,     AgentEvent.CALL_ENDED,    AgentState.WRAPPING_UP),
+        StateTransition(AgentState.WRAPPING_UP, AgentEvent.WRAP_UP_DONE,  AgentState.AVAILABLE),
+        StateTransition(AgentState.BREAK,       AgentEvent.END_BREAK,     AgentState.AVAILABLE),
+        StateTransition(AgentState.BREAK,       AgentEvent.LOGOUT,        AgentState.OFFLINE),
     ]
 
     def __init__(self, agent_id: str):
@@ -95,21 +99,37 @@ class AgentStateMachine:
         Raises:
             InvalidTransitionError: if the event is not valid in the current state.
         """
-        # TODO: Find matching transition for (self.state, event)
-        # TODO: If no match → raise InvalidTransitionError
-        # TODO: If guard is set and returns False → raise InvalidTransitionError
-        # TODO: Record transition in self.history
-        # TODO: Call on_enter if set
-        # TODO: Update self.state
-        raise NotImplementedError("trigger() not implemented")
+        matching_transition: Optional[StateTransition] = None
+        for t in self.TRANSITIONS:
+            if t.from_state == self.state and t.event == event:
+                matching_transition = t
+                break
+
+        if matching_transition is None:
+            raise InvalidTransitionError(self.state, event)
+
+        if matching_transition.guard is not None:
+            if not matching_transition.guard(**metadata):
+                raise InvalidTransitionError(self.state, event)
+
+        from_state = self.state
+        to_state = matching_transition.to_state
+
+        self._record_transition(event, from_state, to_state, **metadata)
+
+        if matching_transition.on_enter is not None:
+            matching_transition.on_enter(**metadata)
+
+        self.state = to_state
+        self._state_entered_at = datetime.now()
+        return self.state
 
     def can_trigger(self, event: AgentEvent) -> bool:
         """
         Return True if the event is valid in the current state.
         Does NOT check guards.
         """
-        # TODO: Implement this (do not raise, just return bool)
-        raise NotImplementedError("can_trigger() not implemented")
+        return any(t.from_state == self.state and t.event == event for t in self.TRANSITIONS)
 
     def _record_transition(self, event: AgentEvent, from_state: AgentState,
                             to_state: AgentState, **metadata):
