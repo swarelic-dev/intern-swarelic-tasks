@@ -1,17 +1,17 @@
 """
-tests/test_client.py — Starter tests for Exercise 4.4
-
-Uses `responses` library to mock HTTP requests.
-Run with: pytest tests/ -v
-
-Install: pip install responses pytest
+tests/test_client.py — Unit tests for SCAI API Client (Exercise 4.4)
 """
 import pytest
 import responses as responses_lib
 from datetime import datetime, timedelta
 
 from scai_client import SCAIClient, SCAIClientConfig
-from scai_client.exceptions import SCAINotFoundError, SCAIValidationError, SCAIAPIError
+from scai_client.exceptions import (
+    SCAINotFoundError,
+    SCAIValidationError,
+    SCAIAPIError,
+    SCAIAuthError,
+)
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────
@@ -24,6 +24,7 @@ CALL_LOGS_URL = f'{BASE_URL}/api/v1/call-logs/'
 MOCK_TOKENS = {
     'access': 'mock-access-token-abc123',
     'refresh': 'mock-refresh-token-xyz789',
+    'expires_in': 300,
 }
 
 MOCK_CALL_LOG = {
@@ -80,6 +81,10 @@ class TestConfig:
         with pytest.raises(ValueError):
             SCAIClientConfig(base_url='http://localhost', username='', password='pass')
 
+    def test_empty_password_raises(self):
+        with pytest.raises(ValueError):
+            SCAIClientConfig(base_url='http://localhost', username='a', password='')
+
     def test_zero_timeout_raises(self):
         with pytest.raises(ValueError):
             SCAIClientConfig(base_url='http://localhost', username='a', password='b', timeout=0)
@@ -97,7 +102,6 @@ class TestAuthentication:
             json={'count': 0, 'results': []}, status=200
         )
         result = client.list_call_logs()
-        # Verify login was called
         assert len(responses_lib.calls) == 2  # 1 login + 1 API call
         assert responses_lib.calls[0].request.url == TOKEN_URL
 
@@ -113,6 +117,21 @@ class TestAuthentication:
         assert 'Authorization' in api_call.request.headers
         assert 'Bearer' in api_call.request.headers['Authorization']
 
+    @responses_lib.activate
+    def test_token_refresh_on_401_retry(self, client):
+        register_login_mock()
+        # First API call returns 401
+        responses_lib.add(responses_lib.GET, CALL_LOGS_URL, status=401)
+        # Second login mock after invalidation
+        register_login_mock()
+        # Second API call succeeds
+        responses_lib.add(
+            responses_lib.GET, CALL_LOGS_URL,
+            json={'count': 1, 'results': [MOCK_CALL_LOG]}, status=200
+        )
+        result = client.list_call_logs()
+        assert result['count'] == 1
+
 
 # ─── Call Log CRUD Tests ──────────────────────────────────────────
 
@@ -127,6 +146,15 @@ class TestCallLogs:
         result = client.list_call_logs()
         assert result['count'] == 1
         assert len(result['results']) == 1
+
+    @responses_lib.activate
+    def test_get_call_log_success(self, client):
+        register_login_mock()
+        responses_lib.add(responses_lib.GET, f'{CALL_LOGS_URL}1/', json=MOCK_CALL_LOG, status=200)
+
+        result = client.get_call_log(1)
+        assert result['id'] == 1
+        assert result['agent_name'] == 'Alice'
 
     @responses_lib.activate
     def test_get_call_log_not_found_raises(self, client):
@@ -151,6 +179,15 @@ class TestCallLogs:
         )
         assert result['id'] == 1
         assert result['agent_name'] == 'Alice'
+
+    @responses_lib.activate
+    def test_update_call_log(self, client):
+        register_login_mock()
+        updated_log = {**MOCK_CALL_LOG, 'notes': 'Updated notes'}
+        responses_lib.add(responses_lib.PATCH, f'{CALL_LOGS_URL}1/', json=updated_log, status=200)
+
+        result = client.update_call_log(1, notes='Updated notes')
+        assert result['notes'] == 'Updated notes'
 
     @responses_lib.activate
     def test_delete_call_log_returns_none(self, client):

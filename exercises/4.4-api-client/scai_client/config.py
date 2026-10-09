@@ -1,5 +1,5 @@
 """
-scai_client/config.py — Starter for Exercise 4.4
+scai_client/config.py — Configuration for SCAI Client
 """
 from dataclasses import dataclass
 
@@ -22,5 +22,14 @@ class SCAIClientConfig:
             ValueError: if timeout <= 0
             ValueError: if username or password is empty
         """
-        # TODO: Implement validation
-        pass
+        if not self.base_url or not (self.base_url.startswith("http://") or self.base_url.startswith("https://")):
+            raise ValueError(f"Invalid base_url '{self.base_url}'. Must start with http:// or https://")
+
+        if self.timeout <= 0:
+            raise ValueError(f"timeout must be greater than 0, got {self.timeout}")
+
+        if not self.username:
+            raise ValueError("username cannot be empty")
+
+        if not self.password:
+            raise ValueError("password cannot be empty")

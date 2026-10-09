@@ -1,7 +1,5 @@
 """
-scai_client/auth.py — Starter for Exercise 4.4
-
-TODO: Implement TokenManager.get_access_token(), _login(), _refresh()
+scai_client/auth.py — Token Manager for SCAI Client
 """
 import requests
 from datetime import datetime, timedelta
@@ -33,8 +31,12 @@ class TokenManager:
         Raises:
             SCAIAuthError: if login or refresh fails
         """
-        # TODO: Implement this
-        raise NotImplementedError("get_access_token() not implemented")
+        if self._access_token is None:
+            self._login()
+        elif self.is_expired:
+            self._refresh()
+
+        return self._access_token
 
     def _login(self) -> None:
         """
@@ -44,8 +46,30 @@ class TokenManager:
         Raises:
             SCAIAuthError: on 401 or network error
         """
-        # TODO: Implement this
-        raise NotImplementedError("_login() not implemented")
+        url = f"{self._base_url}/api/auth/token/"
+        payload = {
+            "username": self._username,
+            "password": self._password,
+        }
+
+        try:
+            resp = requests.post(url, json=payload, timeout=self._timeout)
+            if resp.status_code != 200:
+                raise SCAIAuthError(
+                    f"Authentication failed with status {resp.status_code}",
+                    status_code=resp.status_code,
+                    response_body=resp.json() if resp.content else {}
+                )
+
+            data = resp.json()
+            self._access_token = data.get("access")
+            self._refresh_token = data.get("refresh")
+            lifetime_secs = data.get("expires_in", 300)
+            self._expires_at = datetime.now() + timedelta(seconds=lifetime_secs)
+        except SCAIAuthError:
+            raise
+        except Exception as exc:
+            raise SCAIAuthError(f"Login failed due to network error: {exc}")
 
     def _refresh(self) -> None:
         """
@@ -55,8 +79,28 @@ class TokenManager:
         Raises:
             SCAIAuthError: if both refresh AND login fail
         """
-        # TODO: Implement this
-        raise NotImplementedError("_refresh() not implemented")
+        if not self._refresh_token:
+            self._login()
+            return
+
+        url = f"{self._base_url}/api/auth/token/refresh/"
+        payload = {"refresh": self._refresh_token}
+
+        try:
+            resp = requests.post(url, json=payload, timeout=self._timeout)
+            if resp.status_code == 200:
+                data = resp.json()
+                self._access_token = data.get("access")
+                if "refresh" in data:
+                    self._refresh_token = data["refresh"]
+                lifetime_secs = data.get("expires_in", 300)
+                self._expires_at = datetime.now() + timedelta(seconds=lifetime_secs)
+                return
+        except Exception:
+            pass
+
+        # Fallback to full login if refresh request fails
+        self._login()
 
     def invalidate(self) -> None:
         """Clear all stored token state."""
