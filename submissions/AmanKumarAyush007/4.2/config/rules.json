@@ -1,0 +1,6 @@
+[
+  {"id":"vip","name":"VIP routing","priority":1,"conditions":[{"field":"caller_tag","operator":"in","value":["VIP","PREMIUM"]}],"action":{"type":"route","target":"vip-queue"}},
+  {"id":"after-hours-late","name":"After closing","priority":2,"conditions":[{"field":"hour_of_day","operator":"gte","value":21}],"action":{"type":"voicemail","message":"We are closed."}},
+  {"id":"after-hours-early","name":"Before opening","priority":2,"conditions":[{"field":"hour_of_day","operator":"lte","value":8}],"action":{"type":"voicemail","message":"We are closed."}},
+  {"id":"repeat","name":"Repeat caller","priority":3,"conditions":[{"field":"call_count","operator":"gt","value":3}],"action":{"type":"escalate","target":"supervisor"}}
+]
